@@ -2,6 +2,8 @@
 
 The support service is one Worker deployed independently from the VZ portal. It uses D1 for tickets, Access for staff authentication, and Turnstile for public ticket intake.
 
+For the portal-side request contract, exact CORS/origin values, preview-host cautions, and success/error handling, see [Connect the vz.gay portal](./PORTAL-INTEGRATION.md). The portal project is separate; these Worker setup steps do not build or publish it.
+
 ## 1. Create your Cloudflare resources
 
 From the repository root, authenticate Wrangler and create new resources in your own Cloudflare account:
@@ -23,7 +25,7 @@ npm run db:apply:support
 
 Create a Cloudflare Access self-hosted application for `support.vz.gay/*` and an allow policy limited to the VZ support staff. Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.jsonc` to the team hostname and the Access application audience tag. The Worker validates the assertion signature, issuer, audience, expiry, and email claim; missing configuration fails closed.
 
-The public intake route must remain reachable without a staff login. Create a more-specific Access application for `support.vz.gay/api/public/tickets` with a Bypass policy, and keep the broader `support.vz.gay/*` application restricted to staff. Verify the path-specific application takes precedence in your Access configuration. This exception is safe only when the Worker has Turnstile configured; the API rejects requests without a valid token and expected hostname.
+The public intake route must remain reachable without an interactive staff login. Create a more-specific Access application or path rule for `support.vz.gay/api/public/tickets` with a Bypass policy, and keep the broader `support.vz.gay/*` application restricted to staff. Confirm path matching and preflight behavior in your Access configuration so only the public intake path is bypassed; do not bypass the root console or staff API routes. This exception is safe only when the Worker has Turnstile configured; the API rejects requests without a valid token and expected hostname. Bypass only removes the Access login gate for this route; Worker CORS, validation, and Turnstile checks still apply.
 
 ## 3. Configure public intake protection
 
