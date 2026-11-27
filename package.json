@@ -1,0 +1,14 @@
+{
+  "name": "vzsupport",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node --check apps/support-worker/src/index.js && node --test apps/support-worker/test",
+    "dev:support": "wrangler dev --config apps/support-worker/wrangler.jsonc",
+    "deploy:support": "wrangler deploy --config apps/support-worker/wrangler.jsonc",
+    "db:apply:support": "wrangler d1 execute vz_support_db --remote --file=apps/support-worker/schema.sql --config apps/support-worker/wrangler.jsonc"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
