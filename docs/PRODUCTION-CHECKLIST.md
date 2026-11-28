@@ -24,11 +24,11 @@ Use this checklist before pointing the public VZ report form to the Worker. It i
 ## Access controls
 
 - [ ] Create a Cloudflare Access allow policy for the staff console and APIs, limited to named support staff/groups.
-- [ ] Configure the public `POST /api/public/tickets` route to bypass interactive Access only; the Worker still enforces CORS and server-side Turnstile.
-- [ ] Confirm Cloudflare Access path matching so the public intake exception applies only to `/api/public/tickets` (and required preflight), not to `/`, `/api/tickets`, or ticket close routes.
-- [ ] Verify `GET /api/tickets`, `POST /api/tickets`, `POST /api/tickets/:id/close`, and `/` reject unauthenticated callers at the Worker layer.
+- [ ] Configure Access bypass only for public `/`, `/api/public/tickets`, and `/api/public/tickets/lookup`; keep `/admin` and staff API routes protected.
+- [ ] Confirm Cloudflare Access path matching so public path exceptions do not cover `/admin`, `/api/tickets`, or ticket close routes.
+- [ ] Verify `/admin`, `GET /api/tickets`, `POST /api/tickets`, and `POST /api/tickets/:id/close` reject unauthenticated callers at the Worker layer.
 - [ ] Test a signed valid Access assertion against the Worker and confirm staff data is visible only after authentication.
-- [ ] Add Cloudflare rate limiting/WAF protection for public ticket creation.
+- [ ] Add Cloudflare rate limiting for ticket creation and public lookup; lookup requires the exact reference plus reporter email and returns submitted report content.
 
 ## Public intake
 
@@ -37,6 +37,7 @@ Use this checklist before pointing the public VZ report form to the Worker. It i
 - [ ] Cross-origin preflight succeeds from each approved portal origin.
 - [ ] Preflight and POST from an unapproved origin are rejected.
 - [ ] Valid test submission creates exactly one D1 row and returns a reference.
+- [ ] Public lookup finds a ticket only when both the reference and reporter email match; incorrect combinations return the same not-found response.
 - [ ] Invalid challenge, malformed fields, overly large body, malformed email, and unsafe target URL do not create a row.
 - [ ] Portal shows success only for a valid `201` response and stores only server-issued references in local history.
 - [ ] Portal retry after API/network failure retains the entered report and allows a fresh Turnstile token.

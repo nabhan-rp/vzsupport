@@ -22,9 +22,13 @@ Browser on vz.gay
             ▼
         tickets table
 
+Customer at support.vz.gay/
+  ├─ POST /api/public/tickets (Turnstile)
+  └─ GET /api/public/tickets/lookup (reference + reporter email)
+
 Technician browser
   └─ Cloudflare Access login
-       └─ support.vz.gay/ and /api/tickets
+       └─ support.vz.gay/admin and /api/tickets
             └─ Worker verifies Access JWT before returning staff data
 ```
 
@@ -38,14 +42,15 @@ The support Worker is configured for the custom domain `support.vz.gay`. That ho
 
 ## Trust boundaries
 
-- The public API accepts only `POST /api/public/tickets` and its CORS preflight. It does not expose a public ticket listing, ticket search, or ticket status endpoint.
+- Public `GET /` provides customer ticket creation and status lookup forms. The API has `POST /api/public/tickets` for intake and `GET /api/public/tickets/lookup` for a single ticket lookup; it does not expose a public ticket list.
 - Public intake requires a configured exact `Origin`, valid request fields, and a Turnstile token whose verified hostname is allowlisted.
-- Staff routes (`/`, `/api/tickets`, and `/api/tickets/:id/close`) require an Access assertion. The Worker verifies the JWT signature and claims; an Access login screen alone is not a substitute for this check.
+- Public lookup requires a valid ticket reference and matching reporter email; it returns the report body along with the reference, subject, status, and creation time. Apply rate limiting to reduce enumeration attempts.
+- Staff routes (`/admin`, `/api/tickets`, and `/api/tickets/:id/close`) require an Access assertion. The Worker verifies the JWT signature and claims; an Access login screen alone is not a substitute for this check.
 - Public CORS is not authentication. Non-browser callers can forge an `Origin` header; Turnstile and Cloudflare rate limiting are important additional controls.
 - The form should show a ticket reference only after it receives a successful response from the API. Browser history is only a local convenience and is not the system of record.
 
 ## Current scope and known omissions
 
-The current Worker supports public ticket creation, staff ticket creation/listing/closing, D1 storage, Turnstile verification, and an Access-protected technician console. It does not currently send email, support replies or attachments, expose a customer ticket lookup, or provide an SLA/workflow engine. Avoid presenting those as available features until implemented and tested.
+The current Worker supports public ticket creation and lookup, staff ticket creation/listing/closing, D1 storage, Turnstile verification, and an Access-protected technician console. It does not currently send email, support replies or attachments, or provide an SLA/workflow engine. Avoid presenting those as available features until implemented and tested.
 
 The technician API currently returns full ticket details to authenticated staff. Limit Access policies to trusted staff and define retention/backups for D1 before production use.

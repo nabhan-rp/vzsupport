@@ -86,7 +86,7 @@ Only after receiving HTTP `201` and a non-empty `ticket.reference`:
 - add the reference to the browser’s local report history; and
 - clear the submitted form only if that matches the current form UX.
 
-Do not generate a success-shaped local ID if the request fails. Keep form values available for retry, show a localized error, prevent double submission while the request is in flight, and request a fresh Turnstile token after an expired/used token or a verification error. The Worker currently stores the record but does not send an email or provide a public status lookup; keep the existing email escalation as a separate fallback.
+Do not generate a success-shaped local ID if the request fails. Keep form values available for retry, show a localized error, prevent double submission while the request is in flight, and request a fresh Turnstile token after an expired/used token or a verification error. The Worker stores the record and provides a separate public status lookup at `https://support.vz.gay/`; it does not send an email, so keep the existing email escalation as a fallback.
 
 Expected outcomes:
 
@@ -105,12 +105,12 @@ Do not log the request body, reporter email, or Turnstile token in browser or Wo
 
 ## CORS and Turnstile configuration examples
 
-For a production form hosted at `https://vz.gay` and `https://www.vz.gay`:
+For the customer portal hosted at `https://support.vz.gay` and an additional portal form hosted at `https://vz.gay` and `https://www.vz.gay`:
 
 ```jsonc
 "vars": {
-  "PUBLIC_FORM_ORIGINS": "https://vz.gay,https://www.vz.gay",
-  "TURNSTILE_EXPECTED_HOSTNAMES": "vz.gay,www.vz.gay"
+  "PUBLIC_FORM_ORIGINS": "https://support.vz.gay,https://vz.gay,https://www.vz.gay",
+  "TURNSTILE_EXPECTED_HOSTNAMES": "support.vz.gay,vz.gay,www.vz.gay"
 }
 ```
 

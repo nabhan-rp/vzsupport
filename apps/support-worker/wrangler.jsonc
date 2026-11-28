@@ -23,7 +23,7 @@
   "vars": {
     "ACCESS_TEAM_DOMAIN": "nabhanrp.cloudflareaccess.com",
     "ACCESS_AUD": "bc0f3073dde5c4f590cf8aa9ada64807a2e05022f8e01da3e6c113b2f1f3cf8b",
-    "PUBLIC_FORM_ORIGINS": "https://vz.gay,https://www.vz.gay",
-    "TURNSTILE_EXPECTED_HOSTNAMES": "vz.gay,www.vz.gay"
+    "PUBLIC_FORM_ORIGINS": "https://support.vz.gay,https://vz.gay,https://www.vz.gay",
+    "TURNSTILE_EXPECTED_HOSTNAMES": "support.vz.gay,vz.gay,www.vz.gay"
   }
 }

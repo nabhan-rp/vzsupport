@@ -5,7 +5,7 @@
 1. Inspect the browser’s actual page origin, including scheme, `www`/apex host, preview host, and port.
 2. Confirm that exact origin is present in `PUBLIC_FORM_ORIGINS`, without a trailing slash or path.
 3. Confirm `OPTIONS /api/public/tickets` returns `204` with that exact `Access-Control-Allow-Origin`.
-4. Confirm the public route is not intercepted by a broader Cloudflare Access application. Only the intake path should bypass interactive login.
+4. Confirm public `/` and the public API paths `/api/public/tickets` and `/api/public/tickets/lookup` are not intercepted by the staff Cloudflare Access application.
 5. Confirm the portal is calling the HTTPS URL `https://support.vz.gay/api/public/tickets`.
 
 Do not fix CORS by setting wildcard `*`.
@@ -31,7 +31,7 @@ Do not fix CORS by setting wildcard `*`.
 
 ## Staff console loops to login or returns `401`
 
-1. Confirm the hostname is covered by the intended Access application and policy.
+1. Confirm `/admin` and staff API paths are covered by the intended Access application and policy. The customer portal at `/` and public API paths should not require an interactive Access login.
 2. Confirm the Access assertion is present as `cf-access-jwt-assertion` after login.
 3. Check `ACCESS_TEAM_DOMAIN` matches the issuer host (team domain only; no `https://` or path).
 4. Check `ACCESS_AUD` matches the audience configured for this exact Access application.
@@ -46,6 +46,7 @@ The Worker intentionally fails closed when Access configuration is missing or in
 - Ensure the form is not expecting an older response such as `{ "ok": true }`; the public API returns `{ "ok": true, "ticket": { "id", "reference" } }`.
 - Do not create a synthetic local ticket ID as a fallback. Keep the form data and show a retry/error state instead.
 - Local browser history is not a status API; it stores only a reference after a confirmed successful creation.
+- Public status lookup requires the same email used when creating the ticket. It returns 404 for an incorrect reference/email pair and reveals the submitted report body on a match.
 
 ## Worker deployment or schema command fails
 

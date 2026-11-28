@@ -25,11 +25,11 @@ npm run db:apply:support
 
 Create a Cloudflare Access self-hosted application for `support.vz.gay/*` and an allow policy limited to the VZ support staff. Set `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD` in `wrangler.jsonc` to the team hostname and the Access application audience tag. The Worker validates the assertion signature, issuer, audience, expiry, and email claim; missing configuration fails closed.
 
-The public intake route must remain reachable without an interactive staff login. Create a more-specific Access application or path rule for `support.vz.gay/api/public/tickets` with a Bypass policy, and keep the broader `support.vz.gay/*` application restricted to staff. Confirm path matching and preflight behavior in your Access configuration so only the public intake path is bypassed; do not bypass the root console or staff API routes. This exception is safe only when the Worker has Turnstile configured; the API rejects requests without a valid token and expected hostname. Bypass only removes the Access login gate for this route; Worker CORS, validation, and Turnstile checks still apply.
+The public customer portal and lookup must remain reachable without an interactive staff login. Create specific Access path rules/applications with Bypass for `support.vz.gay/`, `support.vz.gay/api/public/tickets`, and `support.vz.gay/api/public/tickets/lookup`; keep the broader `support.vz.gay/*` application restricted to staff. Confirm path matching and preflight behavior in your Access configuration so only these public routes are bypassed; do not bypass `/admin` or staff API routes. The intake route remains protected by Worker CORS, validation, and server-side Turnstile even when Access login is bypassed. The lookup route requires both ticket reference and reporter email, but also add Cloudflare rate limiting because those values are not a replacement for full account authentication and lookup reveals the report body.
 
 ## 3. Configure public intake protection
 
-Create a Turnstile widget for the public form hostnames. Add the hostname list to `TURNSTILE_EXPECTED_HOSTNAMES` and the matching browser origins to `PUBLIC_FORM_ORIGINS` in `wrangler.jsonc`. Set the public site key in the separate VZ portal project; it is not a secret.
+Create a Turnstile widget that allows `support.vz.gay` for the customer portal here and each hostname used by the separate VZ portal form. Add hostnames to `TURNSTILE_EXPECTED_HOSTNAMES` and matching browser origins to `PUBLIC_FORM_ORIGINS` in `wrangler.jsonc`. The checked-in defaults include `support.vz.gay`, `vz.gay`, and `www.vz.gay`; remove hosts you do not use. Set the public site key in the Worker page and separate VZ portal project; it is not a secret. Confirm the provided site key is configured to allow `support.vz.gay`.
 
 Store the Turnstile secret as a Worker secret:
 
@@ -65,6 +65,6 @@ If custom-domain provisioning is not available yet, use the generated `workers.d
 ## Local development notes
 
 - `npm run dev:support` starts Wrangler locally; D1 local state is managed by Wrangler.
-- Staff endpoints and `/` still require an Access JWT. For end-to-end staff testing, deploy behind the configured Access application rather than adding an authentication bypass to production code.
+- The public customer portal and public ticket endpoints do not require an Access JWT. `/admin`, `/api/tickets`, and `/api/tickets/:id/close` do. For end-to-end staff testing, deploy behind the configured Access application rather than adding an authentication bypass to production code.
 - The public ticket endpoint returns clear client errors for invalid input and `503` when required bindings/secrets are not configured.
 - The Worker currently stores ticket text and contact details in D1. Configure retention, backups, and access policies appropriate for support data before production use.

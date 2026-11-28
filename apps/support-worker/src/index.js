@@ -1,4 +1,6 @@
 const PUBLIC_TICKET_PATH = "/api/public/tickets";
+const PUBLIC_TICKET_LOOKUP_PATH = "/api/public/tickets/lookup";
+const TURNSTILE_SITE_KEY = "0x4AAAAAAGWaOorjmzmCqhEP";
 const MAX_REQUEST_BYTES = 16 * 1024;
 const ACCESS_KEYS_TTL_MS = 5 * 60 * 1000;
 
@@ -8,7 +10,8 @@ let accessSigningKeysTeam;
 
 export default {
   async fetch(request, env) {
-    const { pathname } = new URL(request.url);
+    const url = new URL(request.url);
+    const { pathname } = url;
 
     try {
       if (pathname === PUBLIC_TICKET_PATH) {
@@ -27,9 +30,16 @@ export default {
         return await createPublicTicket(request, env);
       }
 
+      if (pathname === PUBLIC_TICKET_LOOKUP_PATH) {
+        if (request.method !== "GET") {
+          return json({ error: "Method not allowed" }, 405);
+        }
+        return await lookupPublicTicket(url, env);
+      }
+
       const closeMatch = pathname.match(/^\/api\/tickets\/(\d+)\/close$/);
       const staffRoute =
-        pathname === "/" || pathname === "/api/tickets" || Boolean(closeMatch);
+        pathname === "/admin" || pathname === "/api/tickets" || Boolean(closeMatch);
 
       if (staffRoute) {
         const accessError = await requireStaffAccess(request, env);
@@ -37,6 +47,9 @@ export default {
       }
 
       if (pathname === "/" && request.method === "GET") {
+        return customerPortalPage();
+      }
+      if (pathname === "/admin" && request.method === "GET") {
         return technicianPage();
       }
       if (pathname === "/api/tickets" && request.method === "GET") {
@@ -139,6 +152,41 @@ async function createPublicTicket(request, env) {
       201
     )
   );
+}
+
+async function lookupPublicTicket(url, env) {
+  const reference = url.searchParams.get("reference")?.trim() ?? "";
+  const reporterEmail = url.searchParams.get("email")?.trim() ?? "";
+  const match = reference.match(/^VZ-(\d{4})-(\d{6})$/);
+  if (!match) {
+    throw new RequestError("Enter a ticket reference in the format VZ-YYYY-NNNNNN");
+  }
+  const email = requiredEmail(reporterEmail);
+  if (!env.SUPPORT_DB) {
+    return json({ error: "Ticket database is not configured" }, 503);
+  }
+
+  const ticketId = Number(match[2]);
+  const year = match[1];
+  const ticket = await env.SUPPORT_DB.prepare(
+    "SELECT id, subject, body, status, created_at FROM tickets WHERE id = ?1 AND strftime('%Y', created_at) = ?2 AND lower(reporter_email) = lower(?3) LIMIT 1"
+  )
+    .bind(ticketId, year, email)
+    .first();
+  if (!ticket) {
+    return json({ error: "Ticket not found. Check the reference and email address." }, 404);
+  }
+
+  return json({
+    ticket: {
+      id: ticket.id,
+      reference: `VZ-${year}-${String(ticket.id).padStart(6, "0")}`,
+      subject: ticket.subject,
+      body: ticket.body,
+      status: ticket.status,
+      created_at: ticket.created_at,
+    },
+  });
 }
 
 function insertTicket(database, ticket) {
@@ -430,6 +478,218 @@ async function verifyTurnstile(token, request, env) {
     .map((hostname) => hostname.trim())
     .filter(Boolean);
   return result.success === true && allowedHostnames.includes(result.hostname);
+}
+
+function customerPortalPage() {
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#10263e">
+    <title>VZ Support · Customer Help Center</title>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <style>
+      :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #172033; background: #f3f6fb; }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-height: 100vh; }
+      header { color: white; background: linear-gradient(120deg, #10263e, #174f65 60%, #415b92); padding: 48px max(24px, calc((100vw - 1060px) / 2)); }
+      header p { max-width: 650px; margin: 10px 0 0; color: #d3e2ef; line-height: 1.6; }
+      .eyebrow { color: #9de2d1; font-size: .76rem; font-weight: 750; letter-spacing: .14em; text-transform: uppercase; }
+      h1 { margin: 8px 0 0; font-size: clamp(2rem, 5vw, 3rem); letter-spacing: -.04em; }
+      main { max-width: 1060px; margin: -22px auto 48px; padding: 0 20px; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(280px, .8fr); gap: 20px; align-items: start; }
+      section { background: white; border: 1px solid #e1e7ef; border-radius: 16px; padding: clamp(20px, 4vw, 30px); box-shadow: 0 12px 35px #15345112; }
+      h2 { margin: 0; font-size: 1.2rem; letter-spacing: -.02em; }
+      .intro { color: #66748a; margin: 8px 0 20px; font-size: .92rem; line-height: 1.55; }
+      label { display: block; margin: 14px 0 6px; font-size: .83rem; font-weight: 680; }
+      input, textarea, select { display: block; width: 100%; padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 9px; color: #172033; background: #fff; font: inherit; }
+      input:focus, textarea:focus, select:focus { outline: 3px solid #2d8e7940; border-color: #287d70; }
+      textarea { min-height: 130px; resize: vertical; }
+      button { border: 0; border-radius: 9px; padding: 11px 16px; color: white; background: #176b70; font: inherit; font-weight: 700; cursor: pointer; }
+      button:hover { background: #12595e; }
+      button:disabled { opacity: .6; cursor: wait; }
+      .submit-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 14px; margin-top: 18px; }
+      .message { min-height: 1.4em; margin: 12px 0 0; color: #176b70; font-size: .88rem; line-height: 1.5; overflow-wrap: anywhere; }
+      .message.error { color: #a23838; }
+      .lookup { margin-top: 20px; }
+      .result { margin-top: 18px; padding: 16px; border: 1px solid #dce5ec; border-radius: 10px; background: #f7fafc; }
+      .result h3 { margin: 0; font-size: 1rem; }
+      .result-meta { margin: 7px 0 12px; color: #66748a; font-size: .82rem; }
+      .result-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; font-size: .9rem; }
+      .status { display: inline-flex; padding: 4px 9px; border-radius: 999px; background: #e6f4ef; color: #17664e; font-size: .76rem; font-weight: 750; text-transform: uppercase; }
+      footer { max-width: 1060px; margin: 0 auto; padding: 0 20px 34px; color: #758197; font-size: .8rem; }
+      footer a { color: #315a76; }
+      .hidden { display: none; }
+      @media (max-width: 760px) { header { padding: 34px 22px 48px; } main { grid-template-columns: 1fr; margin-top: -20px; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="eyebrow">VZ Ecosystem · Customer Care</div>
+      <h1>How can we help?</h1>
+      <p>Send a request to the VZ support team or check the latest status of a ticket you have already submitted.</p>
+    </header>
+    <main>
+      <section aria-labelledby="create-heading">
+        <h2 id="create-heading">Contact support</h2>
+        <p class="intro">Tell us what you need help with. Your ticket reference will appear after the request has been saved.</p>
+        <form id="ticket-form">
+          <label for="customer-name">Name</label>
+          <input id="customer-name" name="customerName" maxlength="120" autocomplete="name" required>
+          <label for="reporter-email">Email address</label>
+          <input id="reporter-email" name="reporterEmail" type="email" maxlength="254" autocomplete="email" required>
+          <label for="category">What can we help with?</label>
+          <select id="category" name="category" required>
+            <option value="general">General support</option>
+            <option value="technical">Technical issue</option>
+            <option value="account">Account access</option>
+            <option value="billing">Billing</option>
+            <option value="abuse">Abuse or safety report</option>
+            <option value="other">Other</option>
+          </select>
+          <label for="subject">Subject</label>
+          <input id="subject" name="subject" maxlength="200" required>
+          <label for="body">How can we help?</label>
+          <textarea id="body" name="body" maxlength="10000" required></textarea>
+          <div class="submit-row">
+            <div class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}" data-theme="light" data-action="support-ticket" data-callback="onTurnstileSuccess" data-expired-callback="onTurnstileExpired" data-error-callback="onTurnstileError"></div>
+            <button id="submit-ticket" type="submit" disabled>Submit request</button>
+          </div>
+          <p id="submit-message" class="message" role="status" aria-live="polite"></p>
+        </form>
+      </section>
+      <section class="lookup" aria-labelledby="lookup-heading">
+        <h2 id="lookup-heading">Check ticket status</h2>
+        <p class="intro">Enter the reference from your confirmation and the email address used when submitting it.</p>
+        <form id="lookup-form">
+          <label for="reference">Ticket reference</label>
+          <input id="reference" name="reference" placeholder="VZ-2026-000123" pattern="VZ-[0-9]{4}-[0-9]{6}" maxlength="14" autocomplete="off" required>
+          <label for="lookup-email">Email address</label>
+          <input id="lookup-email" name="email" type="email" maxlength="254" autocomplete="email" required>
+          <div class="submit-row"><button id="lookup-button" type="submit">Find ticket</button></div>
+          <p id="lookup-message" class="message" role="status" aria-live="polite"></p>
+        </form>
+        <article id="ticket-result" class="result hidden" aria-live="polite"></article>
+      </section>
+    </main>
+    <footer>For urgent safety concerns, use the appropriate emergency reporting channel. <a href="https://vz.gay">Return to vz.gay</a></footer>
+    <script>
+      const ticketForm = document.getElementById("ticket-form");
+      const submitButton = document.getElementById("submit-ticket");
+      const submitMessage = document.getElementById("submit-message");
+      const lookupForm = document.getElementById("lookup-form");
+      const lookupButton = document.getElementById("lookup-button");
+      const lookupMessage = document.getElementById("lookup-message");
+      const ticketResult = document.getElementById("ticket-result");
+
+      window.onTurnstileSuccess = () => { submitButton.disabled = false; };
+      window.onTurnstileExpired = () => {
+        submitButton.disabled = true;
+        submitMessage.textContent = "Verification expired. Complete the challenge again.";
+        submitMessage.classList.add("error");
+      };
+      window.onTurnstileError = () => {
+        submitButton.disabled = true;
+        submitMessage.textContent = "Verification could not load. Refresh the page and try again.";
+        submitMessage.classList.add("error");
+      };
+
+      function showMessage(element, message, isError = false) {
+        element.textContent = message;
+        element.classList.toggle("error", isError);
+      }
+
+      function resetChallenge() {
+        submitButton.disabled = true;
+        if (window.turnstile) window.turnstile.reset();
+      }
+
+      ticketForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        if (submitButton.disabled) return;
+        submitButton.disabled = true;
+        showMessage(submitMessage, "Submitting your request…");
+        const values = new FormData(ticketForm);
+        const payload = {
+          customerName: values.get("customerName"),
+          reporterEmail: values.get("reporterEmail"),
+          category: values.get("category"),
+          subject: values.get("subject"),
+          body: values.get("body"),
+          turnstileToken: values.get("cf-turnstile-response"),
+        };
+        try {
+          const response = await fetch("/api/public/tickets", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Unable to submit your request.");
+          if (!result.ticket || typeof result.ticket.reference !== "string") {
+            throw new Error("The request was accepted but no ticket reference was returned. Please contact support.");
+          }
+          showMessage(submitMessage, "Your request has been received. Reference: " + result.ticket.reference);
+          ticketForm.reset();
+        } catch (error) {
+          showMessage(submitMessage, error.message || "Unable to reach support. Please try again.", true);
+        } finally {
+          resetChallenge();
+        }
+      });
+
+      function addResultText(parent, tagName, className, value) {
+        const element = document.createElement(tagName);
+        element.className = className;
+        element.textContent = value;
+        parent.append(element);
+      }
+
+      lookupForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        lookupButton.disabled = true;
+        ticketResult.classList.add("hidden");
+        ticketResult.replaceChildren();
+        showMessage(lookupMessage, "Looking up your ticket…");
+        const values = new FormData(lookupForm);
+        const query = new URLSearchParams({
+          reference: String(values.get("reference")).trim().toUpperCase(),
+          email: String(values.get("email")).trim(),
+        });
+        try {
+          const response = await fetch("/api/public/tickets/lookup?" + query.toString(), {
+            headers: { Accept: "application/json" },
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Ticket not found.");
+          const ticket = result.ticket;
+          addResultText(ticketResult, "h3", "", ticket.reference);
+          addResultText(ticketResult, "p", "result-meta", "Submitted " + ticket.created_at);
+          addResultText(ticketResult, "span", "status", ticket.status);
+          addResultText(ticketResult, "h4", "", ticket.subject);
+          addResultText(ticketResult, "p", "result-body", ticket.body);
+          ticketResult.classList.remove("hidden");
+          showMessage(lookupMessage, "Ticket found.");
+        } catch (error) {
+          showMessage(lookupMessage, error.message || "Unable to find that ticket.", true);
+        } finally {
+          lookupButton.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>`;
+  return new Response(html, {
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+      "Content-Security-Policy":
+        "default-src 'none'; script-src 'unsafe-inline' https://challenges.cloudflare.com; style-src 'unsafe-inline'; frame-src https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      "Referrer-Policy": "no-referrer",
+      "X-Content-Type-Options": "nosniff",
+      "X-Frame-Options": "DENY",
+    },
+  });
 }
 
 function technicianPage() {

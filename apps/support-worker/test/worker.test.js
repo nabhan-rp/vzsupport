@@ -3,6 +3,7 @@ import test from "node:test";
 import worker from "../src/index.js";
 
 const publicOrigin = "https://vz.gay";
+const supportOrigin = "https://support.vz.gay";
 
 function makeRequest(path, { method = "GET", headers = {}, body } = {}) {
   return new Request(`https://support.vz.gay${path}`, {
@@ -23,6 +24,29 @@ function makeDatabase() {
             async run() {
               calls.push({ query, values });
               return { meta: { last_row_id: 42, changes: 1 } };
+            },
+            async first() {
+              calls.push({ query, values });
+              return null;
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+function makeLookupDatabase(ticket) {
+  const calls = [];
+  return {
+    calls,
+    prepare(query) {
+      return {
+        bind(...values) {
+          return {
+            async first() {
+              calls.push({ query, values });
+              return ticket;
             },
           };
         },
@@ -62,57 +86,183 @@ test("staff ticket APIs verify Cloudflare Access signatures and audience", async
   );
   const jwk = { ...(await crypto.subtle.exportKey("jwk", publicKey)), kid: keyId };
   const previousFetch = globalThis.fetch;
+  let certificateSet = { jwk_public_certs: [jwk] };
   globalThis.fetch = async (input) => {
-    assert.equal(input, `https://${teamDomain}/cdn-cgi/access/certs`);
-    return Response.json({ jwk_public_certs: [jwk] });
+    assert.match(input, /^https:\/\/test-[\w-]+\.cloudflareaccess\.com\/cdn-cgi\/access\/certs$/);
+    return Response.json(certificateSet);
   };
   t.after(() => {
     globalThis.fetch = previousFetch;
   });
 
-  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
-  const header = encode({ alg: "RS256", kid: keyId, typ: "JWT" });
-  const claims = encode({
-    iss: `https://${teamDomain}`,
-    aud: audience,
-    exp: Math.floor(Date.now() / 1000) + 60,
-    email: "agent@vz.gay",
-  });
-  const signingInput = `${header}.${claims}`;
-  const signature = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    privateKey,
-    new TextEncoder().encode(signingInput)
-  );
-  const signaturePart = Buffer.from(signature).toString("base64url");
-  const token = `${signingInput}.${signaturePart}`;
-  const env = {
-    ACCESS_TEAM_DOMAIN: teamDomain,
+  const createToken = async (tokenTeamDomain) => {
+    const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const header = encode({ alg: "RS256", kid: keyId, typ: "JWT" });
+    const claims = encode({
+      iss: `https://${tokenTeamDomain}`,
+      aud: audience,
+      exp: Math.floor(Date.now() / 1000) + 60,
+      email: "agent@vz.gay",
+    });
+    const signingInput = `${header}.${claims}`;
+    const signature = await crypto.subtle.sign(
+      "RSASSA-PKCS1-v1_5",
+      privateKey,
+      new TextEncoder().encode(signingInput)
+    );
+    return `${signingInput}.${Buffer.from(signature).toString("base64url")}`;
+  };
+  const makeAccessEnv = (accessTeamDomain) => ({
+    ACCESS_TEAM_DOMAIN: accessTeamDomain,
     ACCESS_AUD: audience,
     SUPPORT_DB: {
       prepare() {
         return { async all() { return { results: [] }; } };
       },
     },
-  };
+  });
+  const token = await createToken(teamDomain);
 
   const validResponse = await worker.fetch(
     makeRequest("/api/tickets", {
       headers: { "cf-access-jwt-assertion": token },
     }),
-    env
+    makeAccessEnv(teamDomain)
   );
   assert.equal(validResponse.status, 200);
   assert.deepEqual(await validResponse.json(), { tickets: [] });
 
+  const adminResponse = await worker.fetch(
+    makeRequest("/admin", {
+      headers: { "cf-access-jwt-assertion": token },
+    }),
+    makeAccessEnv(teamDomain)
+  );
+  assert.equal(adminResponse.status, 200);
+  assert.match(await adminResponse.text(), /Technician Console/);
+
+  const signaturePart = token.slice(token.lastIndexOf(".") + 1);
   const invalidSignature = `${token.slice(0, token.lastIndexOf(".") + 1)}${signaturePart[0] === "A" ? "B" : "A"}${signaturePart.slice(1)}`;
   const rejectedResponse = await worker.fetch(
     makeRequest("/api/tickets", {
       headers: { "cf-access-jwt-assertion": invalidSignature },
     }),
-    env
+    makeAccessEnv(teamDomain)
   );
   assert.equal(rejectedResponse.status, 401);
+
+  certificateSet = { keys: [jwk] };
+  const fallbackTeamDomain = `test-${crypto.randomUUID()}.cloudflareaccess.com`;
+  const fallbackResponse = await worker.fetch(
+    makeRequest("/api/tickets", {
+      headers: {
+        "cf-access-jwt-assertion": await createToken(fallbackTeamDomain),
+      },
+    }),
+    makeAccessEnv(fallbackTeamDomain)
+  );
+  assert.equal(fallbackResponse.status, 200);
+});
+
+test("public homepage serves ticket submission and lookup without Access", async () => {
+  const response = await worker.fetch(makeRequest("/"), {});
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /Customer Care/);
+  assert.match(html, /data-sitekey="0x4AAAAAAGWaOorjmzmCqhEP"/);
+  assert.match(html, /data-callback="onTurnstileSuccess"/);
+  assert.match(html, /fetch\("\/api\/public\/tickets"/);
+  assert.match(html, /\/api\/public\/tickets\/lookup\?/);
+  assert.doesNotMatch(html, /Technician Console/);
+});
+
+test("technician console moved to Access-protected /admin", async () => {
+  const response = await worker.fetch(
+    makeRequest("/admin"),
+    {
+      ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com",
+      ACCESS_AUD: "access-audience",
+    }
+  );
+  assert.equal(response.status, 401);
+
+  const publicAdminResponse = await worker.fetch(makeRequest("/admin"), {});
+  assert.equal(publicAdminResponse.status, 503);
+
+  const closeResponse = await worker.fetch(
+    makeRequest("/api/tickets/42/close", { method: "POST" }),
+    {
+      ACCESS_TEAM_DOMAIN: "team.cloudflareaccess.com",
+      ACCESS_AUD: "access-audience",
+    }
+  );
+  assert.equal(closeResponse.status, 401);
+});
+
+test("public ticket lookup validates reference and email before querying D1", async () => {
+  const database = makeLookupDatabase(null);
+  const response = await worker.fetch(
+    makeRequest("/api/public/tickets/lookup?reference=not-a-reference&email=ada%40example.com"),
+    { SUPPORT_DB: database }
+  );
+  assert.equal(response.status, 400);
+  assert.equal(database.calls.length, 0);
+
+  const invalidEmail = await worker.fetch(
+    makeRequest("/api/public/tickets/lookup?reference=VZ-2026-000042&email=invalid"),
+    { SUPPORT_DB: database }
+  );
+  assert.equal(invalidEmail.status, 400);
+  assert.equal(database.calls.length, 0);
+});
+
+test("public ticket lookup returns matching status and report body only", async () => {
+  const createdAt = `${new Date().getUTCFullYear()}-11-28 01:23:45`;
+  const database = makeLookupDatabase({
+    id: 42,
+    subject: "Help with account",
+    body: "Please review the account issue.",
+    status: "open",
+    created_at: createdAt,
+  });
+  const response = await worker.fetch(
+    makeRequest(
+      `/api/public/tickets/lookup?reference=VZ-${new Date().getUTCFullYear()}-000042&email=ADA%40EXAMPLE.COM`
+    ),
+    { SUPPORT_DB: database }
+  );
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(await response.json(), {
+    ticket: {
+      id: 42,
+      reference: `VZ-${new Date().getUTCFullYear()}-000042`,
+      subject: "Help with account",
+      body: "Please review the account issue.",
+      status: "open",
+      created_at: createdAt,
+    },
+  });
+  assert.deepEqual(database.calls[0].values, [
+    42,
+    String(new Date().getUTCFullYear()),
+    "ADA@EXAMPLE.COM",
+  ]);
+});
+
+test("public ticket lookup uses the same not-found response for mismatched credentials", async () => {
+  const database = makeLookupDatabase(null);
+  const response = await worker.fetch(
+    makeRequest("/api/public/tickets/lookup?reference=VZ-2026-000042&email=wrong%40example.com"),
+    { SUPPORT_DB: database }
+  );
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), {
+    error: "Ticket not found. Check the reference and email address.",
+  });
 });
 
 test("public ticket preflight only allows the configured portal origin", async () => {
@@ -209,7 +359,7 @@ test("public ticket intake verifies Turnstile and persists a reference", async (
       "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     );
     assert.equal(new URLSearchParams(init.body).get("secret"), "turnstile-secret");
-    return Response.json({ success: true, hostname: "vz.gay" });
+    return Response.json({ success: true, hostname: "support.vz.gay" });
   };
   t.after(() => {
     globalThis.fetch = previousFetch;
@@ -219,7 +369,7 @@ test("public ticket intake verifies Turnstile and persists a reference", async (
     makeRequest("/api/public/tickets", {
       method: "POST",
       headers: {
-        Origin: publicOrigin,
+        Origin: supportOrigin,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -234,14 +384,14 @@ test("public ticket intake verifies Turnstile and persists a reference", async (
     }),
     {
       SUPPORT_DB: database,
-      PUBLIC_FORM_ORIGINS: publicOrigin,
+      PUBLIC_FORM_ORIGINS: `${publicOrigin},${supportOrigin}`,
       TURNSTILE_SECRET_KEY: "turnstile-secret",
-      TURNSTILE_EXPECTED_HOSTNAMES: "vz.gay",
+      TURNSTILE_EXPECTED_HOSTNAMES: "support.vz.gay",
     }
   );
 
   assert.equal(response.status, 201);
-  assert.equal(response.headers.get("Access-Control-Allow-Origin"), publicOrigin);
+  assert.equal(response.headers.get("Access-Control-Allow-Origin"), supportOrigin);
   const result = await response.json();
   assert.equal(result.ok, true);
   assert.equal(result.ticket.id, 42);
