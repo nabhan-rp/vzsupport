@@ -49,7 +49,7 @@ Local public submission still needs a working Turnstile secret/verification path
 - `POST /api/public/tickets` — public intake; requires an exact allowed Origin, JSON fields, Turnstile token, and D1.
 - `OPTIONS /api/public/tickets` — browser CORS preflight from an allowed origin.
 - `GET /` — public customer support portal.
-- `GET /api/public/tickets/lookup?reference=VZ-YYYY-NNNNNN&email=...` — lookup one ticket after reference/email match; returns report body and status details.
+- `GET /api/public/tickets/status?reference=VZ-YYYY-NNNNNN&email=...` — lookup one ticket after reference/email match; returns reference, status, category, subject, and creation time.
 - `GET /admin` — staff technician console; requires valid Cloudflare Access JWT.
 - `GET /api/tickets` — staff ticket list; requires valid Cloudflare Access JWT.
 - `POST /api/tickets` — staff ticket create; requires valid Cloudflare Access JWT.

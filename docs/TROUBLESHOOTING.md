@@ -5,7 +5,7 @@
 1. Inspect the browser’s actual page origin, including scheme, `www`/apex host, preview host, and port.
 2. Confirm that exact origin is present in `PUBLIC_FORM_ORIGINS`, without a trailing slash or path.
 3. Confirm `OPTIONS /api/public/tickets` returns `204` with that exact `Access-Control-Allow-Origin`.
-4. Confirm public `/` and the public API paths `/api/public/tickets` and `/api/public/tickets/lookup` are not intercepted by the staff Cloudflare Access application.
+4. Confirm public `/` and the public API paths `/api/public/tickets` and `/api/public/tickets/status` are not intercepted by the staff Cloudflare Access application.
 5. Confirm the portal is calling the HTTPS URL `https://support.vz.gay/api/public/tickets`.
 
 Do not fix CORS by setting wildcard `*`.
@@ -46,7 +46,7 @@ The Worker intentionally fails closed when Access configuration is missing or in
 - Ensure the form is not expecting an older response such as `{ "ok": true }`; the public API returns `{ "ok": true, "ticket": { "id", "reference" } }`.
 - Do not create a synthetic local ticket ID as a fallback. Keep the form data and show a retry/error state instead.
 - Local browser history is not a status API; it stores only a reference after a confirmed successful creation.
-- Public status lookup requires the same email used when creating the ticket. It returns 404 for an incorrect reference/email pair and reveals the submitted report body on a match.
+- Public status lookup requires the same email used when creating the ticket. It returns 404 for an incorrect reference/email pair and shows the ticket status, category, subject, and creation time on a match.
 
 ## Worker deployment or schema command fails
 

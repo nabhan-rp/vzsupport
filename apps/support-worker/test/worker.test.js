@@ -164,16 +164,23 @@ test("staff ticket APIs verify Cloudflare Access signatures and audience", async
   assert.equal(fallbackResponse.status, 200);
 });
 
-test("public homepage serves ticket submission and lookup without Access", async () => {
+test("public homepage serves customer ticket forms and reads the ref query without Access", async () => {
   const response = await worker.fetch(makeRequest("/"), {});
   const html = await response.text();
 
   assert.equal(response.status, 200);
   assert.match(html, /Customer Care/);
+  assert.match(html, /Hubungi CS &amp; Bantuan VZ/);
+  assert.match(html, /Cek Status Tiket/);
+  for (const category of ["general", "account", "technical", "billing", "dmca", "phishing", "animal_eco"]) {
+    assert.match(html, new RegExp(`<option value="${category}">`));
+  }
   assert.match(html, /data-sitekey="0x4AAAAAAGWaOorjmzmCqhEP"/);
   assert.match(html, /data-callback="onTurnstileSuccess"/);
+  assert.match(html, /URLSearchParams\(window\.location\.search\)\.get\("ref"\)/);
+  assert.match(html, /reference"\)\.value = requestedReference/);
   assert.match(html, /fetch\("\/api\/public\/tickets"/);
-  assert.match(html, /\/api\/public\/tickets\/lookup\?/);
+  assert.match(html, /\/api\/public\/tickets\/status\?/);
   assert.doesNotMatch(html, /Technician Console/);
 });
 
@@ -186,6 +193,9 @@ test("technician console moved to Access-protected /admin", async () => {
     }
   );
   assert.equal(response.status, 401);
+
+  const publicRoot = await worker.fetch(makeRequest("/"), {});
+  assert.equal(publicRoot.status, 200);
 
   const publicAdminResponse = await worker.fetch(makeRequest("/admin"), {});
   assert.equal(publicAdminResponse.status, 503);
@@ -200,35 +210,118 @@ test("technician console moved to Access-protected /admin", async () => {
   assert.equal(closeResponse.status, 401);
 });
 
-test("public ticket lookup validates reference and email before querying D1", async () => {
+test("technician console includes clear ticket references and report metadata", async (t) => {
+  const teamDomain = `test-${crypto.randomUUID()}.cloudflareaccess.com`;
+  const audience = "vz-support-test-audience";
+  const keyId = "admin-test-key";
+  const { privateKey, publicKey } = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"]
+  );
+  const publicJwk = {
+    ...(await crypto.subtle.exportKey("jwk", publicKey)),
+    kid: keyId,
+  };
+  const encode = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const header = encode({ alg: "RS256", kid: keyId });
+  const claims = encode({
+    iss: `https://${teamDomain}`,
+    aud: audience,
+    exp: Math.floor(Date.now() / 1000) + 60,
+    email: "agent@vz.gay",
+  });
+  const input = `${header}.${claims}`;
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    privateKey,
+    new TextEncoder().encode(input)
+  );
+  const token = `${input}.${Buffer.from(signature).toString("base64url")}`;
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ keys: [publicJwk] });
+  t.after(() => {
+    globalThis.fetch = previousFetch;
+  });
+
+  const response = await worker.fetch(
+    makeRequest("/admin", {
+      headers: { "cf-access-jwt-assertion": token },
+    }),
+    {
+      ACCESS_TEAM_DOMAIN: teamDomain,
+      ACCESS_AUD: audience,
+    }
+  );
+  const html = await response.text();
+  assert.equal(response.status, 200);
+  assert.match(html, /VZ-/);
+  assert.match(html, /ticket\.created_at/);
+  assert.match(html, /ticket\.category/);
+  assert.match(html, /ticket\.customer_name/);
+  assert.match(html, /ticket\.reporter_email/);
+  assert.match(html, /ticket\.target_url/);
+  assert.match(html, /status\.toUpperCase\(\)/);
+  assert.match(html, /target\.href = targetUrl\.toString\(\)/);
+
+  const database = makeDatabase();
+  const staffCreateResponse = await worker.fetch(
+    makeRequest("/api/tickets", {
+      method: "POST",
+      headers: {
+        "cf-access-jwt-assertion": token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        customer_name: "Internal customer",
+        subject: "Internal issue",
+        body: "Created by technician",
+      }),
+    }),
+    {
+      ACCESS_TEAM_DOMAIN: teamDomain,
+      ACCESS_AUD: audience,
+      SUPPORT_DB: database,
+    }
+  );
+  assert.equal(staffCreateResponse.status, 201);
+  assert.equal(database.calls[0].values[2], "general");
+});
+
+test("public ticket status validates reference and email before querying D1", async () => {
   const database = makeLookupDatabase(null);
   const response = await worker.fetch(
-    makeRequest("/api/public/tickets/lookup?reference=not-a-reference&email=ada%40example.com"),
+    makeRequest("/api/public/tickets/status?reference=not-a-reference&email=ada%40example.com"),
     { SUPPORT_DB: database }
   );
   assert.equal(response.status, 400);
   assert.equal(database.calls.length, 0);
 
   const invalidEmail = await worker.fetch(
-    makeRequest("/api/public/tickets/lookup?reference=VZ-2026-000042&email=invalid"),
+    makeRequest("/api/public/tickets/status?reference=VZ-2026-000042&email=invalid"),
     { SUPPORT_DB: database }
   );
   assert.equal(invalidEmail.status, 400);
   assert.equal(database.calls.length, 0);
 });
 
-test("public ticket lookup returns matching status and report body only", async () => {
+test("public ticket status returns uppercase status, category, subject and creation time", async () => {
   const createdAt = `${new Date().getUTCFullYear()}-11-28 01:23:45`;
   const database = makeLookupDatabase({
     id: 42,
+    category: "dmca",
     subject: "Help with account",
-    body: "Please review the account issue.",
     status: "open",
     created_at: createdAt,
   });
   const response = await worker.fetch(
     makeRequest(
-      `/api/public/tickets/lookup?reference=VZ-${new Date().getUTCFullYear()}-000042&email=ADA%40EXAMPLE.COM`
+      `/api/public/tickets/status?reference=VZ-${new Date().getUTCFullYear()}-000042&email=ADA%40EXAMPLE.COM`
     ),
     { SUPPORT_DB: database }
   );
@@ -239,9 +332,9 @@ test("public ticket lookup returns matching status and report body only", async 
     ticket: {
       id: 42,
       reference: `VZ-${new Date().getUTCFullYear()}-000042`,
+      category: "dmca",
       subject: "Help with account",
-      body: "Please review the account issue.",
-      status: "open",
+      status: "OPEN",
       created_at: createdAt,
     },
   });
@@ -252,10 +345,32 @@ test("public ticket lookup returns matching status and report body only", async 
   ]);
 });
 
-test("public ticket lookup uses the same not-found response for mismatched credentials", async () => {
+test("public ticket status reports CLOSED tickets as CLOSED", async () => {
+  const year = new Date().getUTCFullYear();
+  const database = makeLookupDatabase({
+    id: 8,
+    category: "technical",
+    subject: "Resolved issue",
+    status: "closed",
+    created_at: `${year}-01-02 03:04:05`,
+  });
+  const response = await worker.fetch(
+    makeRequest(
+      `/api/public/tickets/status?reference=VZ-${year}-000008&email=ada%40example.com`
+    ),
+    { SUPPORT_DB: database }
+  );
+  const { ticket } = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(ticket.status, "CLOSED");
+  assert.equal(ticket.category, "technical");
+});
+
+test("public ticket status uses the same not-found response for mismatched credentials", async () => {
   const database = makeLookupDatabase(null);
   const response = await worker.fetch(
-    makeRequest("/api/public/tickets/lookup?reference=VZ-2026-000042&email=wrong%40example.com"),
+    makeRequest("/api/public/tickets/status?reference=VZ-2026-000042&email=wrong%40example.com"),
     { SUPPORT_DB: database }
   );
 
@@ -377,7 +492,7 @@ test("public ticket intake verifies Turnstile and persists a reference", async (
         reporterEmail: "ada@example.com",
         subject: "Abuse report",
         body: "Please review this report.",
-        category: "abuse",
+        category: "dmca",
         targetUrl: "https://example.com/report",
         turnstileToken: "test-token",
       }),
@@ -403,7 +518,7 @@ test("public ticket intake verifies Turnstile and persists a reference", async (
   assert.deepEqual(database.calls[0].values, [
     "Ada",
     "ada@example.com",
-    "abuse",
+    "dmca",
     "https://example.com/report",
     "Abuse report",
     "Please review this report.",

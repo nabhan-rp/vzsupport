@@ -1,5 +1,5 @@
 const PUBLIC_TICKET_PATH = "/api/public/tickets";
-const PUBLIC_TICKET_LOOKUP_PATH = "/api/public/tickets/lookup";
+const PUBLIC_TICKET_STATUS_PATH = "/api/public/tickets/status";
 const TURNSTILE_SITE_KEY = "0x4AAAAAAGWaOorjmzmCqhEP";
 const MAX_REQUEST_BYTES = 16 * 1024;
 const ACCESS_KEYS_TTL_MS = 5 * 60 * 1000;
@@ -30,11 +30,11 @@ export default {
         return await createPublicTicket(request, env);
       }
 
-      if (pathname === PUBLIC_TICKET_LOOKUP_PATH) {
+      if (pathname === PUBLIC_TICKET_STATUS_PATH) {
         if (request.method !== "GET") {
           return json({ error: "Method not allowed" }, 405);
         }
-        return await lookupPublicTicket(url, env);
+        return await getPublicTicketStatus(url, env);
       }
 
       const closeMatch = pathname.match(/^\/api\/tickets\/(\d+)\/close$/);
@@ -93,7 +93,7 @@ async function createStaffTicket(request, env) {
   const ticket = {
     customerName: requiredText(payload.customer_name, "customer_name", 120),
     reporterEmail: optionalEmail(payload.reporter_email),
-    category: optionalText(payload.category, 80),
+    category: optionalCategory(payload.category),
     targetUrl: optionalUrl(payload.target_url),
     subject: requiredText(payload.subject, "subject", 200),
     body: requiredText(payload.body, "body", 10000),
@@ -114,7 +114,7 @@ async function createPublicTicket(request, env) {
   const ticket = {
     customerName: requiredText(payload.customerName, "customerName", 120),
     reporterEmail: requiredEmail(payload.reporterEmail),
-    category: optionalText(payload.category, 80),
+    category: optionalCategory(payload.category),
     targetUrl: optionalUrl(payload.targetUrl),
     subject: requiredText(payload.subject, "subject", 200),
     body: requiredText(payload.body, "body", 10000),
@@ -154,7 +154,7 @@ async function createPublicTicket(request, env) {
   );
 }
 
-async function lookupPublicTicket(url, env) {
+async function getPublicTicketStatus(url, env) {
   const reference = url.searchParams.get("reference")?.trim() ?? "";
   const reporterEmail = url.searchParams.get("email")?.trim() ?? "";
   const match = reference.match(/^VZ-(\d{4})-(\d{6})$/);
@@ -169,7 +169,7 @@ async function lookupPublicTicket(url, env) {
   const ticketId = Number(match[2]);
   const year = match[1];
   const ticket = await env.SUPPORT_DB.prepare(
-    "SELECT id, subject, body, status, created_at FROM tickets WHERE id = ?1 AND strftime('%Y', created_at) = ?2 AND lower(reporter_email) = lower(?3) LIMIT 1"
+    "SELECT id, category, subject, status, created_at FROM tickets WHERE id = ?1 AND strftime('%Y', created_at) = ?2 AND lower(reporter_email) = lower(?3) LIMIT 1"
   )
     .bind(ticketId, year, email)
     .first();
@@ -181,9 +181,9 @@ async function lookupPublicTicket(url, env) {
     ticket: {
       id: ticket.id,
       reference: `VZ-${year}-${String(ticket.id).padStart(6, "0")}`,
+      category: ticket.category || "general",
       subject: ticket.subject,
-      body: ticket.body,
-      status: ticket.status,
+      status: String(ticket.status).toUpperCase(),
       created_at: ticket.created_at,
     },
   });
@@ -197,7 +197,7 @@ function insertTicket(database, ticket) {
     .bind(
       ticket.customerName,
       ticket.reporterEmail,
-      ticket.category,
+      ticket.category || "general",
       ticket.targetUrl,
       ticket.subject,
       ticket.body
@@ -316,7 +316,6 @@ async function getAccessSigningKey(teamDomain, keyId) {
     if (!response.ok) {
       throw new Error(`Could not load Cloudflare Access signing keys (${response.status})`);
     }
-    // SESUDAH DIPERBAIKI:
     const certificateSet = await response.json();
     const jwkKeys = Array.isArray(certificateSet.keys)
       ? certificateSet.keys
@@ -386,6 +385,10 @@ function optionalText(value, maxLength) {
     throw new RequestError(`Optional text must be no longer than ${maxLength} characters`);
   }
   return value.trim() || null;
+}
+
+function optionalCategory(value) {
+  return optionalText(value, 80) || "general";
 }
 
 function requiredEmail(value) {
@@ -526,47 +529,48 @@ function customerPortalPage() {
   <body>
     <header>
       <div class="eyebrow">VZ Ecosystem · Customer Care</div>
-      <h1>How can we help?</h1>
-      <p>Send a request to the VZ support team or check the latest status of a ticket you have already submitted.</p>
+      <h1>Pusat Bantuan VZ</h1>
+      <p>Hubungi tim Customer Support VZ atau cek status tiket Anda menggunakan nomor referensi dan email yang digunakan saat mengirim tiket.</p>
     </header>
     <main>
       <section aria-labelledby="create-heading">
-        <h2 id="create-heading">Contact support</h2>
-        <p class="intro">Tell us what you need help with. Your ticket reference will appear after the request has been saved.</p>
+        <h2 id="create-heading">Hubungi CS &amp; Bantuan VZ</h2>
+        <p class="intro">Ceritakan kendala atau laporan Anda. Nomor referensi tiket akan ditampilkan setelah tiket berhasil disimpan.</p>
         <form id="ticket-form">
-          <label for="customer-name">Name</label>
+          <label for="customer-name">Nama</label>
           <input id="customer-name" name="customerName" maxlength="120" autocomplete="name" required>
-          <label for="reporter-email">Email address</label>
+          <label for="reporter-email">Alamat email</label>
           <input id="reporter-email" name="reporterEmail" type="email" maxlength="254" autocomplete="email" required>
-          <label for="category">What can we help with?</label>
+          <label for="category">Kategori bantuan</label>
           <select id="category" name="category" required>
-            <option value="general">General support</option>
-            <option value="technical">Technical issue</option>
-            <option value="account">Account access</option>
-            <option value="billing">Billing</option>
-            <option value="abuse">Abuse or safety report</option>
-            <option value="other">Other</option>
+            <option value="general">Umum</option>
+            <option value="account">Akun</option>
+            <option value="technical">Teknis</option>
+            <option value="billing">Tagihan</option>
+            <option value="dmca">DMCA / Hak Cipta</option>
+            <option value="phishing">Phishing / Penipuan</option>
+            <option value="animal_eco">Kekerasan Hewan / Lingkungan</option>
           </select>
-          <label for="subject">Subject</label>
+          <label for="subject">Subjek</label>
           <input id="subject" name="subject" maxlength="200" required>
-          <label for="body">How can we help?</label>
+          <label for="body">Detail bantuan atau laporan</label>
           <textarea id="body" name="body" maxlength="10000" required></textarea>
           <div class="submit-row">
             <div class="cf-turnstile" data-sitekey="${TURNSTILE_SITE_KEY}" data-theme="light" data-action="support-ticket" data-callback="onTurnstileSuccess" data-expired-callback="onTurnstileExpired" data-error-callback="onTurnstileError"></div>
-            <button id="submit-ticket" type="submit" disabled>Submit request</button>
+            <button id="submit-ticket" type="submit" disabled>Kirim tiket</button>
           </div>
           <p id="submit-message" class="message" role="status" aria-live="polite"></p>
         </form>
       </section>
       <section class="lookup" aria-labelledby="lookup-heading">
-        <h2 id="lookup-heading">Check ticket status</h2>
-        <p class="intro">Enter the reference from your confirmation and the email address used when submitting it.</p>
+        <h2 id="lookup-heading">Cek Status Tiket</h2>
+        <p class="intro">Masukkan nomor referensi tiket dan email yang digunakan saat tiket dikirim.</p>
         <form id="lookup-form">
-          <label for="reference">Ticket reference</label>
+          <label for="reference">Nomor tiket</label>
           <input id="reference" name="reference" placeholder="VZ-2026-000123" pattern="VZ-[0-9]{4}-[0-9]{6}" maxlength="14" autocomplete="off" required>
-          <label for="lookup-email">Email address</label>
+          <label for="lookup-email">Alamat email</label>
           <input id="lookup-email" name="email" type="email" maxlength="254" autocomplete="email" required>
-          <div class="submit-row"><button id="lookup-button" type="submit">Find ticket</button></div>
+          <div class="submit-row"><button id="lookup-button" type="submit">Cek status</button></div>
           <p id="lookup-message" class="message" role="status" aria-live="polite"></p>
         </form>
         <article id="ticket-result" class="result hidden" aria-live="polite"></article>
@@ -581,6 +585,11 @@ function customerPortalPage() {
       const lookupButton = document.getElementById("lookup-button");
       const lookupMessage = document.getElementById("lookup-message");
       const ticketResult = document.getElementById("ticket-result");
+
+      const requestedReference = new URLSearchParams(window.location.search).get("ref");
+      if (requestedReference && /^VZ-\d{4}-\d{6}$/.test(requestedReference)) {
+        document.getElementById("reference").value = requestedReference;
+      }
 
       window.onTurnstileSuccess = () => { submitButton.disabled = false; };
       window.onTurnstileExpired = () => {
@@ -608,7 +617,7 @@ function customerPortalPage() {
         event.preventDefault();
         if (submitButton.disabled) return;
         submitButton.disabled = true;
-        showMessage(submitMessage, "Submitting your request…");
+        showMessage(submitMessage, "Mengirim tiket…");
         const values = new FormData(ticketForm);
         const payload = {
           customerName: values.get("customerName"),
@@ -629,10 +638,10 @@ function customerPortalPage() {
           if (!result.ticket || typeof result.ticket.reference !== "string") {
             throw new Error("The request was accepted but no ticket reference was returned. Please contact support.");
           }
-          showMessage(submitMessage, "Your request has been received. Reference: " + result.ticket.reference);
+          showMessage(submitMessage, "Tiket berhasil dikirim. Nomor referensi: " + result.ticket.reference);
           ticketForm.reset();
         } catch (error) {
-          showMessage(submitMessage, error.message || "Unable to reach support. Please try again.", true);
+          showMessage(submitMessage, error.message || "Tiket gagal dikirim. Silakan coba kembali.", true);
         } finally {
           resetChallenge();
         }
@@ -650,28 +659,28 @@ function customerPortalPage() {
         lookupButton.disabled = true;
         ticketResult.classList.add("hidden");
         ticketResult.replaceChildren();
-        showMessage(lookupMessage, "Looking up your ticket…");
+        showMessage(lookupMessage, "Memeriksa status tiket…");
         const values = new FormData(lookupForm);
         const query = new URLSearchParams({
           reference: String(values.get("reference")).trim().toUpperCase(),
           email: String(values.get("email")).trim(),
         });
         try {
-          const response = await fetch("/api/public/tickets/lookup?" + query.toString(), {
+          const response = await fetch("/api/public/tickets/status?" + query.toString(), {
             headers: { Accept: "application/json" },
           });
           const result = await response.json();
           if (!response.ok) throw new Error(result.error || "Ticket not found.");
           const ticket = result.ticket;
           addResultText(ticketResult, "h3", "", ticket.reference);
-          addResultText(ticketResult, "p", "result-meta", "Submitted " + ticket.created_at);
+          addResultText(ticketResult, "p", "result-meta", "Dibuat: " + ticket.created_at);
           addResultText(ticketResult, "span", "status", ticket.status);
+          addResultText(ticketResult, "p", "result-meta", "Kategori: " + String(ticket.category || "general").toUpperCase());
           addResultText(ticketResult, "h4", "", ticket.subject);
-          addResultText(ticketResult, "p", "result-body", ticket.body);
           ticketResult.classList.remove("hidden");
-          showMessage(lookupMessage, "Ticket found.");
+          showMessage(lookupMessage, "Status tiket ditemukan.");
         } catch (error) {
-          showMessage(lookupMessage, error.message || "Unable to find that ticket.", true);
+          showMessage(lookupMessage, error.message || "Tiket tidak ditemukan. Periksa nomor tiket dan email.", true);
         } finally {
           lookupButton.disabled = false;
         }
@@ -721,6 +730,11 @@ function technicianPage() {
       .ticket { border: 1px solid #e1e7ef; border-radius: 10px; padding: 14px; }
       .ticket h3 { margin: 0; font-size: .98rem; }
       .ticket p { white-space: pre-wrap; overflow-wrap: anywhere; }
+      .ticket-meta a { color: #315a76; overflow-wrap: anywhere; }
+      .ticket-badges { display: flex; flex-wrap: wrap; gap: 7px; margin: 10px 0; }
+      .badge { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; background: #edf2f7; color: #34445a; font-size: .75rem; font-weight: 750; }
+      .badge-open { background: #e6f4ef; color: #17664e; }
+      .badge-closed { background: #eef0f3; color: #596579; }
       .ticket button { padding: 6px 10px; background: #eef4f7; color: #24485b; font-size: .8rem; }
       .ticket button:disabled { color: #667; }
       .empty { color: #68758a; text-align: center; padding: 28px 8px; }
@@ -792,25 +806,51 @@ function technicianPage() {
           card.className = "ticket";
           const heading = document.createElement("div");
           heading.className = "ticket-heading";
-          heading.append(makeTextElement("h3", "", ticket.subject));
-          heading.append(makeTextElement("span", "muted", ticket.status.toUpperCase()));
+          const createdYear = String(ticket.created_at || "").slice(0, 4) || String(new Date().getUTCFullYear());
+          const reference = "VZ-" + createdYear + "-" + String(ticket.id).padStart(6, "0");
+          heading.append(makeTextElement("h3", "", reference + " · " + ticket.subject));
+          const status = String(ticket.status || "open").toLowerCase();
+          const badges = document.createElement("div");
+          badges.className = "ticket-badges";
+          const statusBadge = makeTextElement(
+            "span",
+            "badge " + (status === "closed" ? "badge-closed" : "badge-open"),
+            status.toUpperCase()
+          );
+          const categoryBadge = makeTextElement(
+            "span",
+            "badge",
+            String(ticket.category || "general").toUpperCase()
+          );
+          badges.append(statusBadge, categoryBadge);
           card.append(heading);
-          card.append(makeTextElement(
-            "div",
-            "ticket-meta",
-            [ticket.customer_name, ticket.reporter_email, ticket.category, "#" + ticket.id, ticket.created_at]
-              .filter(Boolean)
-              .join(" · ")
-          ));
+          card.append(badges);
+          card.append(makeTextElement("div", "ticket-meta", "Customer: " + (ticket.customer_name || "Unknown")));
+          if (ticket.reporter_email) {
+            card.append(makeTextElement("div", "ticket-meta", "Email: " + ticket.reporter_email));
+          }
+          card.append(makeTextElement("div", "ticket-meta", "Created: " + (ticket.created_at || "")));
           if (ticket.target_url) {
-            const target = makeTextElement("p", "ticket-meta", ticket.target_url);
-            card.append(target);
+            let targetUrl;
+            try {
+              targetUrl = new URL(ticket.target_url);
+            } catch {}
+            if (targetUrl && ["http:", "https:"].includes(targetUrl.protocol)) {
+              const target = document.createElement("a");
+              target.href = targetUrl.toString();
+              target.target = "_blank";
+              target.rel = "noopener noreferrer";
+              target.textContent = ticket.target_url;
+              const targetRow = makeTextElement("div", "ticket-meta", "Reported URL: ");
+              targetRow.append(target);
+              card.append(targetRow);
+            }
           }
           const details = document.createElement("details");
-          details.append(makeTextElement("summary", "", "View details"));
+          details.append(makeTextElement("summary", "", "View report details"));
           details.append(makeTextElement("p", "", ticket.body));
           card.append(details);
-          if (ticket.status === "open") {
+          if (status === "open") {
             const closeButton = document.createElement("button");
             closeButton.type = "button";
             closeButton.textContent = "Close ticket";

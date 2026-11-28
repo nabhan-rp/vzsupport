@@ -24,11 +24,11 @@ Use this checklist before pointing the public VZ report form to the Worker. It i
 ## Access controls
 
 - [ ] Create a Cloudflare Access allow policy for the staff console and APIs, limited to named support staff/groups.
-- [ ] Configure Access bypass only for public `/`, `/api/public/tickets`, and `/api/public/tickets/lookup`; keep `/admin` and staff API routes protected.
+- [ ] Configure Access bypass only for public `/`, `/api/public/tickets`, and `/api/public/tickets/status`; keep `/admin` and staff API routes protected.
 - [ ] Confirm Cloudflare Access path matching so public path exceptions do not cover `/admin`, `/api/tickets`, or ticket close routes.
 - [ ] Verify `/admin`, `GET /api/tickets`, `POST /api/tickets`, and `POST /api/tickets/:id/close` reject unauthenticated callers at the Worker layer.
 - [ ] Test a signed valid Access assertion against the Worker and confirm staff data is visible only after authentication.
-- [ ] Add Cloudflare rate limiting for ticket creation and public lookup; lookup requires the exact reference plus reporter email and returns submitted report content.
+- [ ] Add Cloudflare rate limiting for ticket creation and public status lookup; lookup requires the exact reference plus reporter email.
 
 ## Public intake
 
