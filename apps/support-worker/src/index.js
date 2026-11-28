@@ -268,13 +268,17 @@ async function getAccessSigningKey(teamDomain, keyId) {
     if (!response.ok) {
       throw new Error(`Could not load Cloudflare Access signing keys (${response.status})`);
     }
+    // SESUDAH DIPERBAIKI:
     const certificateSet = await response.json();
-    if (!Array.isArray(certificateSet.jwk_public_certs)) {
+    const jwkKeys = Array.isArray(certificateSet.keys)
+      ? certificateSet.keys
+      : certificateSet.jwk_public_certs;
+    if (!Array.isArray(jwkKeys)) {
       throw new Error("Cloudflare Access returned no JWK signing keys");
     }
 
     const signingKeys = new Map();
-    for (const publicKey of certificateSet.jwk_public_certs) {
+    for (const publicKey of jwkKeys) {
       if (publicKey.kid && publicKey.kty === "RSA" && publicKey.n && publicKey.e) {
         signingKeys.set(
           publicKey.kid,
