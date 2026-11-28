@@ -17,11 +17,11 @@
     {
       "binding": "SUPPORT_DB",
       "database_name": "vz_support_db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+      "database_id": "59ad3174-7548-4004-a92c-bf71ebae2ebe"
     }
   ],
   "vars": {
-    "ACCESS_TEAM_DOMAIN": "REPLACE_WITH_YOUR_TEAM.cloudflareaccess.com",
+    "ACCESS_TEAM_DOMAIN": "nabhanrp.cloudflareaccess.com",
     "ACCESS_AUD": "REPLACE_WITH_YOUR_ACCESS_APPLICATION_AUD",
     "PUBLIC_FORM_ORIGINS": "https://vz.gay,https://www.vz.gay",
     "TURNSTILE_EXPECTED_HOSTNAMES": "vz.gay,www.vz.gay"
